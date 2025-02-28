@@ -32,7 +32,7 @@ def start_client(online=False):
                 py.quit()
                 return
             if event.type == py.KEYDOWN:
-                if event.key==py.K_KP_ENTER:
+                if event.key==py.K_c:
                     print("Going online...")
                     start_online(game, game.player)
 
