@@ -1,54 +1,115 @@
+import pygame as py
+from network import ClientConnexionThread
+from game import Game
 from threading import Thread
 from time import sleep
-import pygame as py
-from network import connect_to_server, send_data, send_and_get_info, ReceiveThread
-from game import Game
-
-def analyse_packet_thread(packets, game: Game):
-    while True:
-        if len(packets) > 0:
-            packet = packets.pop(0)
-            head, body = packet
-            
-            match head:
-                case "data":
-                    game.update_other_player(body)
-
-                case "new":
-                    game.new_other_player(body)
-                    
-def send_thread(client_socket, player, sending_speed):
-    while True:
-        data = player.get_data()
-        if send_data(client_socket, data): assert "Server down"
-        sleep(sending_speed) # Fréquence d'envoi
 
 def start_client(online=False):
-    game = Game()
-    if online: start_online(game, game.player)
-    while True:
+    #Flag
+    running = True
+
+    # Constantes
+    WINDOW_WIDTH, WINDOW_HEIGHT = 800, 600
+    FPS = 60
+
+    NAME = "Lockel"
+    if NAME == "":
+        print("Enter name : ", end="")
+        NAME = input()
+
+    # Pygame
+    py.init()
+    screen = py.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    py.display.set_caption("Mover")
+
+    clock = py.time.Clock()
+    game = Game(screen, NAME)
+
+    connexion_thread = None
+    if online: connexion_thread = start_online(game)
+
+    while running:
+        # Event
         for event in py.event.get():
             if event.type == py.QUIT:
-                py.quit()
-                return
+                running=False
+                break
+            
             if event.type == py.KEYDOWN:
-                if event.key==py.K_c:
-                    print("Going online...")
-                    start_online(game, game.player)
 
-        game.update()
-        game.dt = game.clock.tick(60)/1000
+                if event.key==py.K_c and online==False:
+                    if connexion_thread is not None:
+                        connexion_thread = None
+                        print("Déconnecter")
+                    connexion_thread = start_online(game)
 
-def start_online(game, player):
-    client_socket = connect_to_server('6.tcp.eu.ngrok.io', 17181, with_ngrok=True)
-    print("Connected") 
-    all_player_info = send_and_get_info(client_socket, player.get_info())
-    if all_player_info: game.initialize_other_players(all_player_info)
 
-    receive_thread = ReceiveThread(client_socket)
-    receive_thread.start()
-    Thread(target=send_thread, args=(client_socket, player, 0.01)).start()
+                if event.key == py.K_SPACE:
+                        game.player.jump()  # Appelle la fonction de saut
 
-    Thread(target=analyse_packet_thread, args=(receive_thread.packet, game)).start()
+            if game.joystick and event.type == py.JOYBUTTONDOWN:
+                if event.button == 0:
+                    game.player.jump()
+                elif event.button == 1:
+                    game.player.rect.topleft = (50, 0)
+        
+
+        dt = clock.tick(FPS) / 1000.0
+        if connexion_thread is not None: 
+            if connexion_thread.connected: send_and_apply_data(game, connexion_thread)
+            else: connexion_thread = None
+
+        game.update(dt)
+    print("Quitt")
+    if connexion_thread is not None:
+        connexion_thread.connected=False
+        sleep(2)
+    py.quit
+
+def start_online(game: Game):
+    address = ('7.tcp.eu.ngrok.io', 19294)
+    with_ngrok=False
+    if with_ngrok: #Pour l'utilisation de ngrok
+            # Serveur ngrok tcp 65432
+            print("Give the adress number + port in format \"x ppppp\"")
+            a_p = input().split(' ')
+            if a_p == ['']: a_p = ['0','14788']
+            address = (f"{a_p[0]}.tcp.eu.ngrok.io", int(a_p[1]))
+
+    connexion_thread = ClientConnexionThread(address, game.get_info())
+    if connexion_thread.connected: 
+        game.initialize_other_players(connexion_thread.other_client_init_data)
+        connexion_thread.start()
+
+    return connexion_thread
+
+def send_and_apply_data(game: Game, connexion: ClientConnexionThread):
+    # Send data
+    if not game.update_queue.empty():                   
+        connexion.send_packet(("update", game.update_queue.get()))    # paquet "update"
+
+    elif not game.message_queue.empty():                
+        connexion.send_packet(("msg", game.message_queue.get()))      # paquet "msg"
+
+    else: 
+        connexion.send_packet(("data", game.get_data()))              # paquet "data"
+    
+    # Analyze data
+    while not connexion.packets.empty():
+        packet = connexion.packets.get()
+        head, body = packet
+        
+        match head:
+            case "update":
+                game.set_other_player_info(body)
+            case "msg":
+                game.message_from_other_player(body)
+            case "data":
+                game.set_other_player_data(body)
+
+            case "new":
+                game.new_other_player(body)
+            case "del":
+                game.del_other_player(body)
 
 start_client()

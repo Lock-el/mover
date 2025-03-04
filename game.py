@@ -1,105 +1,118 @@
 import pygame as py
+from queue import Queue
 from entity import Player, OtherPlayer
-from physic import resolve_collision
+from physic import resolve_collision, bord_collision
 
-# Dimensions de la fenêtre
-WINDOW_WIDTH, WINDOW_HEIGHT = 800, 600
-PLAYER_SIZE = 30
+
 
 class Game:
-    def __init__(self):
-        py.init()
-        print("Enter name : ", end='')
-        name = input()
-        self.player = Player(name)
-        self.other_players = {}
-        self.screen = py.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        py.display.set_caption("Mover")
-        self.clock = py.time.Clock()
-        self.dt = 0
+    def __init__(self, screen, name):
+        # Initialisation du joystick
+        self.joystick = None
+        if py.joystick.get_count() > 0:
+            self.joystick = py.joystick.Joystick(0)
+            self.joystick.init()
+            print(self.joystick.get_name(), " connected.")
+        else:
+            print("Aucun joystick détecté.")
 
-    # Pour le jeu en ligne
-    def update_other_player(self, data):     # Recepteur final protocole "data" : list adress ; list position ; list velocité
-        try:
-            address = tuple(data['address'])
-            self.other_players[address].rect.topleft =  data['position']
-            self.other_players[address].velocity =      py.Vector2((data['velocity']))
-        except KeyError:
-            print("Demande d'update de player sans paquet de création player")
-    
-    def new_other_player(self, data):       # Recepteur final protocole "info" : list adress ; str name ; list start_pos ; int masse
-        self.other_players[tuple(data['address'])] = OtherPlayer(tuple(data['address']), data['name'], data['pos'], data['mass'])
-    
-    def initialize_other_players(self, all_player_info):
-        for info in all_player_info:
-            self.new_other_player(info)
+        self.screen = screen
+
+        # Charger l'image d'arrière-plan au format JPG
+        self.background = py.Surface((1280,720))
+        self.background.fill((0, 50, 70))  # Couleur par défaut pour visualiser l'objet
+
+        self.default_font = py.font.Font(None, 20)
+
+
+        self.update_queue = Queue()
+        self.message_queue = Queue()
+
+        self.other_players = {}
+
+        self.player = Player(self.screen, self.joystick)
+
+        self.name = name
+
 
     # Update du game engine
-    def update(self):
-        self.handle_input()
-        self.update_player()
+    def update(self, dt):
+        self.player.update(dt)
         self.fluid_other_player()
-        self.draw()
 
-    def fluid_other_player(self):
-        for player in self.other_players.values():
-            r=player.rect
-            v=player.velocity
-            r.center += v
-            # Bord collide
-            if r.top<0: 
-                r.top=0
-                v.y=0
-            elif r.bottom>self.screen.get_height(): 
-                r.bottom=self.screen.get_height()
-                v.y=0
-            if r.left<0: 
-                r.left=0
-                v.x=0
-            elif r.right>self.screen.get_width(): 
-                r.right=self.screen.get_width()
-                v.x=0
-
-    # Fonctions pour l'update du game engine
-    def update_player(self):
-        r=self.player.rect
-        v=self.player.velocity
-
-        r.center += v
-
-        # Bord collide
-        if r.top<0: 
-            r.top=0
-            v.y=0
-        elif r.bottom>self.screen.get_height(): 
-            r.bottom=self.screen.get_height()
-            v.y=0
-        if r.left<0: 
-            r.left=0
-            v.x=0
-        elif r.right>self.screen.get_width(): 
-            r.right=self.screen.get_width()
-            v.x=0
-
-        #for player in self.other_players.values():
-        #    if self.player.rect.colliderect(player.rect):
-        #        self.player.velocity, player.velocity = resolve_collision(self.player, player)
+        self.draw(dt)
 
 
-    def draw(self):
-        self.screen.fill((0,60,60))
+
+
+    def draw(self, dt):
+        self.screen.blit(self.background, (0, 0))  # Afficher l'arrière-plan
+
         self.screen.blit(self.player.image, self.player.rect)
         for player in self.other_players.values():
             self.screen.blit(player.image, player.rect)
+
+        self.screen.blit(self.default_font.render(f"FPS : {round(1/dt,1)}", True, (0,0,0)), (0,0))
+        
         py.display.flip()
 
-    def handle_input(self):
-        keys = py.key.get_pressed()
-        if keys[py.K_z]:
-            self.player.velocity.y -= self.player.speed * self.dt
-        if keys[py.K_s]:
-            self.player.velocity.y += self.player.speed * self.dt
-        if keys[py.K_q]:
-            self.player.velocity.x -= self.player.speed * self.dt
-        if keys[py.K_d]:
-            self.player.velocity.x += self.player.speed * self.dt
+
+    def fluid_other_player(self):
+        for player in self.other_players.values():
+            player.rect.center += player.velocity
+            # Bord collide
+            bord_collision(self.screen, player.rect, player.velocity)
+
+    
+    # Application des paquets
+    def initialize_other_players(self, all_player_info):
+        if all_player_info:
+            print("Joueur présents dans la partie : ")
+            for info in all_player_info:
+                self.new_other_player(info, with_message=False)
+                print(f"{info['name']} | ", end='')
+            print('')
+        else : print("Premier joueur du serveur !")
+
+
+    def set_other_player_data(self, data):     # Recepteur final protocole "data" -> dict: list address ; list position ; list velocité
+        player = self.other_players[tuple(data['address'])]
+        player.rect.topleft =  data['position']
+        player.velocity =      py.Vector2((data['velocity']))
+
+    def set_other_player_info(self, data):      # Recepteur final protocole "update" -> dict: list address ; str attribut_name ; type_of_attribut attribut_value
+        setattr(self.other_players[tuple(data['address'])], data['name'], data['value'])
+
+    def message_from_other_player(self, data):  # Recepteur final protocole "msg" -> dict: list address ; str message
+        print(f"{self.other_players[tuple(data['address'])].name} : {data['msg']}")
+    
+    def new_other_player(self, data, with_message=True):       # Recepteur final protocole "info" -> dict: list address ; str name ; list start_pos ; int masse
+        if with_message: print(f"{data['name']} joined the party")
+        self.other_players[tuple(data['address'])] = OtherPlayer(tuple(data['address']), data['name'], data['pos'], data['mass'])
+
+    def del_other_player(self, data):       # Recepteur final protocole "del" -> list: address
+        print(f"{self.other_players[tuple(data)].name} left the party")
+        del self.other_players[tuple(data)]
+    
+
+    # Application protocole d'envoi paquets
+    def get_data(self):
+        data = {"position": self.player.rect.topleft, "velocity": (self.player.velocity.x, self.player.velocity.y)}       
+        return data     # Emetteur initial protocole : "data" -> dict: list position ; list velocity
+    
+    def get_info(self):
+        info = {"name":self.name, "pos": self.player.rect.topleft, "mass": self.player.mass}
+        return info     # Emetteur initial protocole : "new" -> dict: string name ; list pos ; int mass
+    
+    
+    def set_attribut(self, attribut_name, attribut_value):
+        setattr(self.player, attribut_name, attribut_value)
+        update = {"name":attribut_name, "value":attribut_value}
+        self.update_queue.put(update)
+                        # Emetteur initial protocole : "update" -> dict: str name (de l'attribut) ; type_of_attribut value
+    
+    def send_message(self, msg):                                                                  
+        message = {"msg": msg}
+        self.message_queue.put(message)
+                        # Emetteur initial protocole "msg" -> dict: str msg
+        
