@@ -20,7 +20,7 @@ class Entity(py.sprite.Sprite):
         self.sum_acceleration = py.math.Vector2(0, 0)
 
         self.on_ground = False  # État pour savoir si l'entité est au sol
-        
+
 
     def apply_force(self, force):   # Force en newton
         self.sum_acceleration += physic.get_acceleration(force, self.MASS)
@@ -37,7 +37,7 @@ class Entity(py.sprite.Sprite):
             ground_resistance_force = -self.velocity * self.GROUND_RESISTANCE
             self.sum_acceleration += ground_resistance_force
 
-        # Mise à jour de la vitesse et de la position. 
+        # Mise à jour de la vitesse et de la position.
         self.velocity += self.sum_acceleration * delta_time    # Acceleration en m/s^2
         self.rect.topleft += self.velocity * delta_time * 100    # Vitesse en m/s
 
